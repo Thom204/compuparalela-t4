@@ -2,43 +2,39 @@
 #include <stdlib.h>
 #include <string.h>
 #include <omp.h>
-#include <time.h>
 
-#define MAX_WORD_LENGTH 50 //Se define un tamaño maximo para la longitud del arreglo de palabras.
-#define MAX_UNIQUE_WORDS 1000 //Se usa para definir el tamaño de los arreglos que van a guardar palabras unicas.
+#define LONGITUD_MAX_PALABRA 50
 
 // Estructura para almacenar pares (palabra, conteo)
 typedef struct {
-    char word[MAX_WORD_LENGTH];
-    int count;
-} WordCount;
+    char palabra[LONGITUD_MAX_PALABRA];
+    int conteo;
+} ParPalabraConteo;
 
 // Estructura para almacenar resultados de cada mapper
 typedef struct {
-    WordCount* pairs;
-    int num_pairs;
-    int mapper_id;
-} MapperResult;
+    ParPalabraConteo* pares;
+    int num_pares;
+    int id_mapper;
+} ResultadoMapper;
 
 // Estructura para el controller
 typedef struct {
-    WordCount* pairs;
-    int num_pairs;
-    int reducer_id;  // A qué reducer va destinado
-} ControllerData;
+    ParPalabraConteo* pares;
+    int num_pares;
+    int id_reducer;
+} DatosController;
 
 // Variables globales
-char** global_array;
-int array_size;
-MapperResult* mapper_results;
-ControllerData* controller_data;
-WordCount* final_results;
-int num_final_results;
+char** arreglo_palabras;          // Arreglo compartido de palabras
+int tamano_arreglo;                // Tamaño del arreglo
+ResultadoMapper* resultados_mappers;   // Resultados de todos los mappers
+DatosController* datos_controller;     // Datos para cada reducer
 
-// Función para buscar una palabra en un arreglo de WordCount
-int find_word(WordCount* arr, int size, const char* word) {
-    for (int i = 0; i < size; i++) {
-        if (strcmp(arr[i].word, word) == 0) {
+// Función para buscar una palabra en un arreglo de pares
+int buscar_palabra(ParPalabraConteo* arr, int tamano, const char* palabra) {
+    for (int i = 0; i < tamano; i++) {
+        if (strcmp(arr[i].palabra, palabra) == 0) {
             return i;
         }
     }
@@ -46,44 +42,46 @@ int find_word(WordCount* arr, int size, const char* word) {
 }
 
 // Función MAPPER - Procesa un fragmento del arreglo
-void mapper(int start, int end, int mapper_id) {
-    int thread_id = omp_get_thread_num();
+void mapper(int inicio, int fin, int id_mapper) {
+    int id_hilo = omp_get_thread_num();
     
-    printf("\n=== MAPPER %d (Thread %d) ===\n", mapper_id, thread_id);
+    printf("\n=== MAPPER %d (Hilo %d) ===\n", id_mapper, id_hilo);
     printf("Fragmento asignado: ");
-    for (int i = start; i < end; i++) {
-        printf("%s ", global_array[i]);
+    for (int i = inicio; i < fin; i++) {
+        printf("%s ", arreglo_palabras[i]);
     }
     printf("\n");
     
-    // Arreglo temporal para contar palabras en este fragmento
-    WordCount local_counts[MAX_UNIQUE_WORDS];
-    int num_unique = 0;
+    // Calcular tamaño del fragmento
+    int tamano_fragmento = fin - inicio;
+    
+    // Crear arreglo para almacenar pares (puede tener duplicados)
+    ParPalabraConteo* conteos_locales = (ParPalabraConteo*)malloc(tamano_fragmento * sizeof(ParPalabraConteo));
+    int num_pares = 0;
     
     // Procesar cada palabra del fragmento
-    for (int i = start; i < end; i++) {
-        int idx = find_word(local_counts, num_unique, global_array[i]);
+    for (int i = inicio; i < fin; i++) {
+        int idx = buscar_palabra(conteos_locales, num_pares, arreglo_palabras[i]);
         
         if (idx == -1) {
             // Nueva palabra
-            strcpy(local_counts[num_unique].word, global_array[i]);
-            local_counts[num_unique].count = 1;
-            num_unique++;
+            strcpy(conteos_locales[num_pares].palabra, arreglo_palabras[i]);
+            conteos_locales[num_pares].conteo = 1;
+            num_pares++;
         } else {
             // Palabra ya existe, incrementar contador
-            local_counts[idx].count++;
+            conteos_locales[idx].conteo++;
         }
     }
     
     // Guardar resultados del mapper
-    mapper_results[mapper_id].pairs = (WordCount*)malloc(num_unique * sizeof(WordCount));
-    mapper_results[mapper_id].num_pairs = num_unique;
-    mapper_results[mapper_id].mapper_id = mapper_id;
+    resultados_mappers[id_mapper].pares = conteos_locales;
+    resultados_mappers[id_mapper].num_pares = num_pares;
+    resultados_mappers[id_mapper].id_mapper = id_mapper;
     
     printf("Emite:\n");
-    for (int i = 0; i < num_unique; i++) {
-        mapper_results[mapper_id].pairs[i] = local_counts[i];
-        printf("  (%s, %d)\n", local_counts[i].word, local_counts[i].count);
+    for (int i = 0; i < num_pares; i++) {
+        printf("  (%s, %d)\n", conteos_locales[i].palabra, conteos_locales[i].conteo);
     }
 }
 
@@ -91,95 +89,109 @@ void mapper(int start, int end, int mapper_id) {
 void controller(int n_mappers, int m_reducers) {
     printf("\n\n=== CONTROLLER (Secuencial) ===\n");
     
-    // Paso 1: Consolidar todos los pares de los mappers
-    WordCount all_pairs[MAX_UNIQUE_WORDS];
-    int total_unique = 0;
-    
-    // Agrupar todas las palabras de todos los mappers
+    // Calcular cuántos pares hay en total
+    int total_pares = 0;
     for (int m = 0; m < n_mappers; m++) {
-        for (int i = 0; i < mapper_results[m].num_pairs; i++) {
-            char* word = mapper_results[m].pairs[i].word;
-            int count = mapper_results[m].pairs[i].count;
-            
-            int idx = find_word(all_pairs, total_unique, word);
-            
-            if (idx == -1) {
-                strcpy(all_pairs[total_unique].word, word);
-                all_pairs[total_unique].count = count;
-                total_unique++;
-            } else {
-                all_pairs[idx].count += count;
-            }
+        total_pares += resultados_mappers[m].num_pares;
+    }
+    
+    // Consolidar todos los pares de los mappers en un solo arreglo
+    ParPalabraConteo* todos_pares = (ParPalabraConteo*)malloc(total_pares * sizeof(ParPalabraConteo));
+    int indice_total = 0;
+    
+    // Copiar todos los pares
+    for (int m = 0; m < n_mappers; m++) {
+        for (int i = 0; i < resultados_mappers[m].num_pares; i++) {
+            todos_pares[indice_total] = resultados_mappers[m].pares[i];
+            indice_total++;
+        }
+    }
+    
+    // Agrupar palabras iguales
+    ParPalabraConteo* pares_agrupados = (ParPalabraConteo*)malloc(total_pares * sizeof(ParPalabraConteo));
+    int num_agrupados = 0;
+    
+    for (int i = 0; i < total_pares; i++) {
+        int idx = buscar_palabra(pares_agrupados, num_agrupados, todos_pares[i].palabra);
+        
+        if (idx == -1) {
+            pares_agrupados[num_agrupados] = todos_pares[i];
+            num_agrupados++;
+        } else {
+            pares_agrupados[idx].conteo += todos_pares[i].conteo;
         }
     }
     
     printf("\nParejas agrupadas:\n");
-    for (int i = 0; i < total_unique; i++) {
-        printf("  (%s, %d)\n", all_pairs[i].word, all_pairs[i].count);
+    for (int i = 0; i < num_agrupados; i++) {
+        printf("  (%s, %d)\n", pares_agrupados[i].palabra, pares_agrupados[i].conteo);
     }
     
-    // Paso 2: Distribuir entre los reducers
-    controller_data = (ControllerData*)malloc(m_reducers * sizeof(ControllerData));
+    // Distribuir entre los reducers
+    datos_controller = (DatosController*)malloc(m_reducers * sizeof(DatosController));
     
     for (int r = 0; r < m_reducers; r++) {
-        controller_data[r].pairs = (WordCount*)malloc(MAX_UNIQUE_WORDS * sizeof(WordCount));
-        controller_data[r].num_pairs = 0;
-        controller_data[r].reducer_id = r;
+        datos_controller[r].pares = (ParPalabraConteo*)malloc(num_agrupados * sizeof(ParPalabraConteo));
+        datos_controller[r].num_pares = 0;
+        datos_controller[r].id_reducer = r;
     }
     
     printf("\nDistribución a Reducers:\n");
-    for (int i = 0; i < total_unique; i++) {
+    for (int i = 0; i < num_agrupados; i++) {
         // Asignar cada palabra a un reducer (distribución round-robin)
-        int reducer_id = i % m_reducers;
+        int id_reducer = i % m_reducers;
         
-        int pos = controller_data[reducer_id].num_pairs;
-        controller_data[reducer_id].pairs[pos] = all_pairs[i];
-        controller_data[reducer_id].num_pairs++;
+        int pos = datos_controller[id_reducer].num_pares;
+        datos_controller[id_reducer].pares[pos] = pares_agrupados[i];
+        datos_controller[id_reducer].num_pares++;
         
         printf("  (%s, %d) -> Reducer %d\n", 
-               all_pairs[i].word, all_pairs[i].count, reducer_id);
+               pares_agrupados[i].palabra, pares_agrupados[i].conteo, id_reducer);
     }
+    
+    free(todos_pares);
+    free(pares_agrupados);
 }
 
 // Función REDUCER - Produce resultado final
-void reducer(int reducer_id) {
-    int thread_id = omp_get_thread_num();
+void reducer(int id_reducer) {
+    int id_hilo = omp_get_thread_num();
     
-    printf("\n=== REDUCER %d (Thread %d) ===\n", reducer_id, thread_id);
+    printf("\n=== REDUCER %d (Hilo %d) ===\n", id_reducer, id_hilo);
     printf("Recibió:\n");
     
-    for (int i = 0; i < controller_data[reducer_id].num_pairs; i++) {
+    for (int i = 0; i < datos_controller[id_reducer].num_pares; i++) {
         printf("  (%s, %d)\n", 
-               controller_data[reducer_id].pairs[i].word,
-               controller_data[reducer_id].pairs[i].count);
+               datos_controller[id_reducer].pares[i].palabra,
+               datos_controller[id_reducer].pares[i].conteo);
     }
     
     printf("Emite (resultado final):\n");
-    for (int i = 0; i < controller_data[reducer_id].num_pairs; i++) {
+    for (int i = 0; i < datos_controller[id_reducer].num_pares; i++) {
         printf("  (%s, %d)\n", 
-               controller_data[reducer_id].pairs[i].word,
-               controller_data[reducer_id].pairs[i].count);
+               datos_controller[id_reducer].pares[i].palabra,
+               datos_controller[id_reducer].pares[i].conteo);
     }
 }
 
 // Versión paralela con MapReduce
-void mapreduce_parallel(int n_mappers, int m_reducers) {
+void mapreduce_paralelo(int n_mappers, int m_reducers) {
     printf("\n********* VERSIÓN PARALELA CON MAPREDUCE *********\n");
     
-    double start_time = omp_get_wtime();
+    double tiempo_inicio = omp_get_wtime();
     
     // Inicializar estructura para resultados de mappers
-    mapper_results = (MapperResult*)malloc(n_mappers * sizeof(MapperResult));
+    resultados_mappers = (ResultadoMapper*)malloc(n_mappers * sizeof(ResultadoMapper));
     
     // FASE MAP (Paralela)
     #pragma omp parallel num_threads(n_mappers)
     {
-        int mapper_id = omp_get_thread_num();
-        int chunk_size = array_size / n_mappers;
-        int start = mapper_id * chunk_size;
-        int end = (mapper_id == n_mappers - 1) ? array_size : start + chunk_size;
+        int id_mapper = omp_get_thread_num();
+        int tamano_chunk = tamano_arreglo / n_mappers;
+        int inicio = id_mapper * tamano_chunk;
+        int fin = (id_mapper == n_mappers - 1) ? tamano_arreglo : inicio + tamano_chunk;
         
-        mapper(start, end, mapper_id);
+        mapper(inicio, fin, id_mapper);
     }
     
     // FASE CONTROLLER (Secuencial)
@@ -188,97 +200,102 @@ void mapreduce_parallel(int n_mappers, int m_reducers) {
     // FASE REDUCE (Paralela)
     #pragma omp parallel num_threads(m_reducers)
     {
-        int reducer_id = omp_get_thread_num();
-        reducer(reducer_id);
+        int id_reducer = omp_get_thread_num();
+        reducer(id_reducer);
     }
     
-    double end_time = omp_get_wtime();
+    double tiempo_fin = omp_get_wtime();
     
     printf("\n\n=== RESULTADO FINAL ===\n");
     for (int r = 0; r < m_reducers; r++) {
-        for (int i = 0; i < controller_data[r].num_pairs; i++) {
+        for (int i = 0; i < datos_controller[r].num_pares; i++) {
             printf("(%s, %d)\n", 
-                   controller_data[r].pairs[i].word,
-                   controller_data[r].pairs[i].count);
+                   datos_controller[r].pares[i].palabra,
+                   datos_controller[r].pares[i].conteo);
         }
     }
     
-    printf("\nTiempo de ejecución paralela: %.6f segundos\n", end_time - start_time);
+    printf("\nTiempo de ejecución paralela: %.6f segundos\n", tiempo_fin - tiempo_inicio);
 }
 
 // Versión secuencial
-void mapreduce_sequential() {
+void mapreduce_secuencial() {
     printf("\n\n********* VERSIÓN SECUENCIAL *********\n");
     
-    double start_time = omp_get_wtime();
+    double tiempo_inicio = omp_get_wtime();
     
-    WordCount counts[MAX_UNIQUE_WORDS];
-    int num_unique = 0;
+    ParPalabraConteo* conteos = (ParPalabraConteo*)malloc(tamano_arreglo * sizeof(ParPalabraConteo));
+    int num_unicos = 0;
     
     // Contar todas las palabras secuencialmente
-    for (int i = 0; i < array_size; i++) {
-        int idx = find_word(counts, num_unique, global_array[i]);
+    for (int i = 0; i < tamano_arreglo; i++) {
+        int idx = buscar_palabra(conteos, num_unicos, arreglo_palabras[i]);
         
         if (idx == -1) {
-            strcpy(counts[num_unique].word, global_array[i]);
-            counts[num_unique].count = 1;
-            num_unique++;
+            strcpy(conteos[num_unicos].palabra, arreglo_palabras[i]);
+            conteos[num_unicos].conteo = 1;
+            num_unicos++;
         } else {
-            counts[idx].count++;
+            conteos[idx].conteo++;
         }
     }
     
-    double end_time = omp_get_wtime();
+    double tiempo_fin = omp_get_wtime();
     
     printf("\nResultado final:\n");
-    for (int i = 0; i < num_unique; i++) {
-        printf("(%s, %d)\n", counts[i].word, counts[i].count);
+    for (int i = 0; i < num_unicos; i++) {
+        printf("(%s, %d)\n", conteos[i].palabra, conteos[i].conteo);
     }
     
-    printf("\nTiempo de ejecución secuencial: %.6f segundos\n", end_time - start_time);
+    printf("\nTiempo de ejecución secuencial: %.6f segundos\n", tiempo_fin - tiempo_inicio);
+    
+    free(conteos);
 }
 
 int main() {
-    // Variables configurables
-    int n_mappers = 4;   // Número de mappers (2-16)
-    int m_reducers = 2;  // Número de reducers (2-16)
+    // Variables configurables (el monitor pondrá valores entre 2 y 16)
+    int n_mappers = 4;   // Número de mappers
+    int m_reducers = 2;  // Número de reducers
     
-    printf("Configuración:\n");
-    printf("  n_mappers = %d\n", n_mappers);
-    printf("  m_reducers = %d\n", m_reducers);
+    printf("=== CONFIGURACIÓN ===\n");
+    printf("n_mappers = %d\n", n_mappers);
+    printf("m_reducers = %d\n", m_reducers);
     
     // Crear arreglo de palabras con al menos 40 elementos
-    const char* words[] = {
-        "gato", "perro", "gato", "casa", "perro", "árbol", "gato", "casa",
-        "perro", "sol", "luna", "gato", "perro", "casa", "árbol", "sol",
-        "gato", "perro", "luna", "casa", "gato", "árbol", "perro", "sol",
-        "casa", "gato", "perro", "luna", "árbol", "gato", "casa", "sol",
-        "perro", "gato", "casa", "árbol", "perro", "sol", "gato", "luna",
-        "casa", "perro", "gato", "árbol", "sol", "perro", "gato", "casa",
-        "luna", "perro", "gato", "casa", "árbol", "sol", "gato", "perro"
+    const char* palabras[] = {
+        "gato", "perro", "gato", "casa", "perro", "arbol", "gato", "casa",
+        "perro", "sol", "luna", "gato", "perro", "casa", "arbol", "sol",
+        "gato", "perro", "luna", "casa", "gato", "arbol", "perro", "sol",
+        "casa", "gato", "perro", "luna", "arbol", "gato", "casa", "sol",
+        "perro", "gato", "casa", "arbol", "perro", "sol", "gato", "luna",
+        "casa", "perro", "gato", "arbol", "sol", "perro", "gato", "casa",
+        "luna", "perro", "gato", "casa", "arbol", "sol", "gato", "perro"
     };
     
-    array_size = sizeof(words) / sizeof(words[0]);
+    tamano_arreglo = sizeof(palabras) / sizeof(palabras[0]);
     
     // Copiar a arreglo global
-    global_array = (char**)malloc(array_size * sizeof(char*));
-    for (int i = 0; i < array_size; i++) {
-        global_array[i] = (char*)malloc(MAX_WORD_LENGTH * sizeof(char));
-        strcpy(global_array[i], words[i]);
+    arreglo_palabras = (char**)malloc(tamano_arreglo * sizeof(char*));
+    for (int i = 0; i < tamano_arreglo; i++) {
+        arreglo_palabras[i] = (char*)malloc(LONGITUD_MAX_PALABRA * sizeof(char));
+        strcpy(arreglo_palabras[i], palabras[i]);
     }
     
-    printf("  Tamaño del arreglo = %d palabras\n", array_size);
+    printf("Tamaño del arreglo = %d palabras\n", tamano_arreglo);
     
     // Ejecutar versión paralela
-    mapreduce_parallel(n_mappers, m_reducers);
+    mapreduce_paralelo(n_mappers, m_reducers);
     
     // Ejecutar versión secuencial
-    mapreduce_sequential();
+    mapreduce_secuencial();
     
     // Liberar memoria
-    free(global_array);
-    free(mapper_results);
-    free(controller_data);
+    for (int i = 0; i < tamano_arreglo; i++) {
+        free(arreglo_palabras[i]);
+    }
+    free(arreglo_palabras);
+    free(resultados_mappers);
+    free(datos_controller);
     
     return 0;
 }
