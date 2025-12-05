@@ -1,0 +1,9 @@
+[{
+    "EMP" : [
+        { "cedula": "015", "nombre": "Fernando Ruiz", "salario": 3600, "dep": "D5" },
+        { "cedula": "016", "nombre": "Gabriela Mendoza", "salario": 2900, "dep": "D1" }
+    ],
+    "DEPT" : [
+        { "dep": "D8", "nombredep": "Calidad", "presupuesto": 42000 }
+    ]
+}]

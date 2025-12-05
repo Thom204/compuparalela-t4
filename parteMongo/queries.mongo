@@ -1,7 +1,7 @@
 const dbName = "empresa_db";
 const collectionName = "empresa_data";
 const outputCollection = "emp_dept_join";
-const dataDirectory = "Data"; 
+const dataDirectory = "Data2"; 
 
 // Usar la base de datos
 use(dbName);
@@ -88,30 +88,70 @@ const mapFunction = function() {
     }
 };
 
+//nota importante, el reducer debe ser indempotente lo que significa que:
+//reduce([A, B, C]) === reduce([reduce(key, [A, B]), C])
 const reduceFunction = function(key, values) {
-    // por cada dep, genera un objeto result con todos sus empleados 
-    const result = {
-        dep: key,
-        empleados: [],
-        departamento: null
-    };
-    
+
+    // Acumuladores consistentes
+    const empleados = {};
+    let departamento = null;
+
     values.forEach(function(value) {
-        if (value.type == "EMP") {
-            result.empleados.push({
+
+        // Caso 1: Entrada de mapa tipo EMP
+        if (value.type === "EMP") {
+            empleados[value.cedula] = {
                 cedula: value.cedula,
                 nombre: value.nombre,
                 salario: value.salario
-            });
-        } else if (value.type == "DEPT") {
-            result.departamento = {
-                nombredep: value.nombredep,
-                presupuesto: value.presupuesto
             };
         }
-        });
-    
-    return result;
+
+        // Caso 2: Entrada de mapa tipo DEPT
+        else if (value.type === "DEPT") {
+            // Si hay múltiples departamentos, todos deben coincidir.
+            // Toma el primero válido; ignora duplicados idénticos.
+            if (!departamento) {
+                departamento = {
+                    nombredep: value.nombredep,
+                    presupuesto: value.presupuesto
+                };
+            }
+        }
+
+        // Caso 3: Entrada proveniente de otro reduce
+        else {
+            // Combinar empleados de reduce parcial
+            if (value.empleados && Array.isArray(value.empleados)) {
+                value.empleados.forEach(function(emp) {
+                    empleados[emp.cedula] = emp;
+                });
+            }
+
+            // Combinar departamento de reduce parcial
+            if (value.departamento && !departamento) {
+                departamento = value.departamento;
+            }
+        }
+    });
+
+    // Normalizar la salida final (IMPORTANTE PARA IDEMPOTENCIA)
+    // Convertir hashmap → array ordenado
+    const empleadosOrdenados = Object.values(empleados)
+        .sort((a, b) => (a.cedula > b.cedula ? 1 : -1));
+
+    return {
+        dep: key,
+        empleados: empleadosOrdenados,
+        departamento: departamento
+    };
 };
 
-db[collectionName].mapReduce(mapFunction, reduceFunction, {out: {inline:  1}});
+//usar {out : {inline : 1}} esta deprecado y causa que mongosh se interrumpa antes de tiempo.
+//mapReduce tambien esta deprecado pero no causa crashes si se maneja la output correctamente.
+
+//usaremos outputCollection como salida y luego mostraremos el contenido.
+const mr = db[collectionName].mapReduce(mapFunction, reduceFunction, {out: outputCollection});     
+
+// por ultimo entregamos el join ordenado por dep.
+db[outputCollection].find().pretty();
