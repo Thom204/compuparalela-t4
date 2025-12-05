@@ -1,0 +1,14 @@
+[{
+    "EMP": [
+      { "cedula": "008", "nombre": "Sofia Ramírez", "salario": 3300, "dep": "D2" },
+      { "cedula": "009", "nombre": "Luis Hernández", "salario": 3700, "dep": "D3" },
+      { "cedula": "010", "nombre": "Carmen Flores", "salario": 3100, "dep": "D5" },
+      { "cedula": "011", "nombre": "Roberto Díaz", "salario": 4200, "dep": "D1" },
+      { "cedula": "012", "nombre": "Patricia Morales", "salario": 2700, "dep": "D4" },
+      { "cedula": "013", "nombre": "Andrés Castro", "salario": 3900, "dep": "D3" },
+      { "cedula": "014", "nombre": "Isabel Vargas", "salario": 3400, "dep": "D2" },
+      { "cedula": "015", "nombre": "Fernando Ruiz", "salario": 3600, "dep": "D5" }
+    ],
+    "DEPT": []
+  }
+]

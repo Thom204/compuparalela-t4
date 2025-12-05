@@ -1,0 +1,117 @@
+const dbName = "empresa_db";
+const collectionName = "empresa_data";
+const outputCollection = "emp_dept_join";
+const dataDirectory = "Data"; 
+
+// Usar la base de datos
+use(dbName);
+
+db[collectionName].drop();
+db[outputCollection].drop();
+
+
+function loadJSONFiles() {
+    const fs = require('fs');
+    const path = require('path');
+    
+    try {
+        if (!fs.existsSync(dataDirectory)) {
+            print("Directorio no encontrado\n");
+            return false;
+        }
+        
+        const files = fs.readdirSync(dataDirectory);
+        const jsonFiles = files.filter(file => file.endsWith('.json'));
+        
+        if (jsonFiles.length === 0) {
+            print("No se encontraron archivos .json en el directorio.");
+            return false;
+        }
+        
+        print("Archivos encontrados: " + jsonFiles.length);
+        
+        let totalDocuments = 0;
+        jsonFiles.forEach(function(file) {
+            const filePath = path.join(dataDirectory, file);
+            print("Cargando: " + file);
+            
+            const fileContent = fs.readFileSync(filePath, 'utf8');
+            const data = JSON.parse(fileContent);
+            
+            if (Array.isArray(data)) {
+                db[collectionName].insertMany(data);
+                totalDocuments += data.length;
+            } else {
+                // Si es un solo objeto, insertarlo
+                db[collectionName].insertOne(data);
+                totalDocuments += 1;
+            }
+        });
+        
+        print(" Total de documentos cargados: " + totalDocuments);
+        return true;
+        
+    } catch (error) {
+        print("Error al cargar archivos: " + error.message);
+        return false;
+    }
+}
+
+const filesLoaded = loadJSONFiles();
+
+print("Total de documentos en colección: " + db[collectionName].countDocuments());
+
+const mapFunction = function() {
+    // emite una dupla (key, {values})
+
+    if (this.EMP && Array.isArray(this.EMP)) {
+        this.EMP.forEach(function(emp) {
+            emit(emp.dep, {
+                type: "EMP",
+                cedula: emp.cedula,
+                nombre: emp.nombre,
+                salario: emp.salario,
+                dep: emp.dep
+            });
+        });
+    }
+    
+    if (this.DEPT && Array.isArray(this.DEPT)) {
+        this.DEPT.forEach(function(dept) {
+            emit(dept.dep, {
+                type: "DEPT",
+                dep: dept.dep,
+                nombredep: dept.nombredep,
+                presupuesto: dept.presupuesto
+            });
+        });
+    }
+};
+
+const reduceFunction = function(key, values) {
+    // por cada dep, genera un objeto result con todos sus empleados 
+    const result = {
+        dep: key,
+        empleados: [],
+        departamento: null
+    };
+    
+    values.forEach(function(value) {
+        if (value.type == "EMP") {
+            result.empleados.push({
+                cedula: value.cedula,
+                nombre: value.nombre,
+                salario: value.salario
+            });
+        } else if (value.type == "DEPT") {
+            result.departamento = {
+                nombredep: value.nombredep,
+                presupuesto: value.presupuesto
+            };
+        }
+        });
+    
+    return result;
+};
+
+db[collectionName].mapReduce(mapFunction, reduceFunction, {out: {inline:  1}});

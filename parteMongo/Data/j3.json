@@ -1,0 +1,15 @@
+[{
+    "EMP": [
+      { "cedula": "016", "nombre": "Gabriela Mendoza", "salario": 2900, "dep": "D1" },
+      { "cedula": "017", "nombre": "Miguel Ortiz", "salario": 4100, "dep": "D3" },
+      { "cedula": "018", "nombre": "Valentina Cruz", "salario": 3200, "dep": "D4" },
+      { "cedula": "019", "nombre": "Javier Rojas", "salario": 3500, "dep": "D2" },
+      { "cedula": "020", "nombre": "Camila Jiménez", "salario": 3800, "dep": "D5" }
+    ],
+    "DEPT": [
+      { "dep": "D6", "nombredep": "Logística", "presupuesto": 38000 },
+      { "dep": "D7", "nombredep": "Producción", "presupuesto": 55000 },
+      { "dep": "D8", "nombredep": "Calidad", "presupuesto": 42000 }
+    ]
+  }
+]
